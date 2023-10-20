@@ -72,15 +72,16 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
             }
         }
     }
-    fn divorce(&mut self, i: usize,other_set: &mut Set<Element<T>>){
-        if i < usize::MAX {
-            self.elements[i].partner_index = usize::MAX;
+    fn divorce(&mut self, i: usize, other_set: &mut Set<Element<T>>){
+        if i < usize::MAX && self.elements[i].has_partner() {
             other_set.elements[self.elements[i].partner_index].partner_index = usize::MAX;
+            self.elements[i].partner_index = usize::MAX;
         }
     }
     fn try_pair(&mut self, i: usize, j: usize, other_set: &mut Set<Element<T>>) -> bool {
-        if (!self.elements[i].has_partner() && !other_set.elements[j].has_partner()) ||  other_set.elements[j].prefers(self.elements[i].index) {
+        if !(self.elements[i].has_partner() || other_set.elements[j].has_partner()) ||  other_set.elements[j].prefers(self.elements[i].index) {
             self.divorce(i, other_set);
+            other_set.divorce(j, self);
             (self.elements[i].partner_index, other_set.elements[j].partner_index) = (other_set.elements[j].index, self.elements[i].index);
             return true;
         }
@@ -88,15 +89,14 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
     }
     fn stable_match_with(&mut self, other: &mut Set<Element<T>>) {
         let size = self.elements.len();
-        'running: loop {
-            if self.any_unpaired() {
-                for i in 0..size {
-                    for j in 0..size {
-                        let result = self.try_pair(i, j, other);
-                        //println!("Trying to pair {:?} with {:?} result: {:?}", self.elements[i], b, result);
-                    }
+        while self.any_unpaired() {
+            for i in 0..size {
+                for j in 0..size {
+                    let result = self.try_pair(i, j, other);
+                    println!("Trying to pair {:?} with {:?} result: {:?}\n", self.elements[i], other.elements[j], result);
                 }
             }
+
         }
     }
 }
