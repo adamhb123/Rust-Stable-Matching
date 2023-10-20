@@ -1,13 +1,19 @@
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Element<T> {
     index: usize,
     partner_index: usize,
     value: T,
     /// Preferences here is a Vec<usize> containing the indices of the preferences of the element, from most preferred to least preferreds
     preferences: Vec<usize>,
+}
+impl<T: std::fmt::Debug> std::fmt::Debug for Element<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}<->{}", self.index, self.partner_index)).unwrap();
+        Ok(())
+    }
 }
 impl<T: std::fmt::Debug> Element<T> {
     fn new(value: T) -> Self {
@@ -35,7 +41,7 @@ impl<T: std::fmt::Debug> Element<T> {
         }
         return None;
     }
-    fn prefers(&self,e_index: usize) -> bool {
+    fn prefers(&self, e_index: usize) -> bool {
         self.get_preference_value(e_index) < self.get_preference_value(self.partner_index)
     }
 }
@@ -47,21 +53,21 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
     fn new(elements: Vec<Element<T>>) -> Self {
         Set { elements }
     }
-    fn any_unpaired(&self) -> bool {
-        for e in &self.elements {
+    fn any_unpaired(&mut self) -> usize {
+        for  e in &mut self.elements {
             if !e.has_partner() {
-                return true;
+                return e.index;
             }
         }
-        false
+        usize::MAX
     }
     fn set_preferences(&mut self, other: &mut Set<Element<T>>, randomize: bool) {
         let size = self.elements.len();
         let preferences: Vec<usize> = (0..size).collect();
         let thread_rng: &mut ThreadRng = &mut thread_rng();
         for i in 0..size {
-            let mut self_preferences = preferences.clone();
-            let mut other_preferences = preferences.clone();
+            let self_preferences = preferences.clone();
+            let other_preferences = preferences.clone();
             self.elements[i].set_preferences(self_preferences);
             self.elements[i].index = i;
             other.elements[i].set_preferences(other_preferences);
@@ -79,24 +85,31 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
         }
     }
     fn try_pair(&mut self, i: usize, j: usize, other_set: &mut Set<Element<T>>) -> bool {
-        if !(self.elements[i].has_partner() || other_set.elements[j].has_partner()) ||  other_set.elements[j].prefers(self.elements[i].index) {
-            self.divorce(i, other_set);
-            other_set.divorce(j, self);
-            (self.elements[i].partner_index, other_set.elements[j].partner_index) = (other_set.elements[j].index, self.elements[i].index);
-            return true;
-        }
-        false
+        self.divorce(i, other_set);
+        other_set.divorce(j, self);
+        (self.elements[i].partner_index, other_set.elements[j].partner_index) = (other_set.elements[j].index, self.elements[i].index);
+        return true;
     }
+    
     fn stable_match_with(&mut self, other: &mut Set<Element<T>>) {
         let size = self.elements.len();
-        while self.any_unpaired() {
-            for i in 0..size {
-                for j in 0..size {
-                    let result = self.try_pair(i, j, other);
-                    println!("Trying to pair {:?} with {:?} result: {:?}\n", self.elements[i], other.elements[j], result);
+        loop {
+            let i = self.any_unpaired();
+            if i == usize::MAX {
+                break
+            }
+            for j in 0..size {
+                let pref_partner = &mut other.elements[self.elements[i].preferences[j]];
+                if !pref_partner.has_partner() {
+                    self.try_pair(i, j, other);
+                    break;
+                }
+                else {
+                    if pref_partner.prefers(i) {
+                        self.try_pair(i, j, other);
+                    }
                 }
             }
-
         }
     }
 }
@@ -113,8 +126,15 @@ fn generate_test_sets(n: usize) -> (Set<Element<usize>>, Set<Element<usize>>) {
     (a, b)
 }
 
+fn test() {
+    let men = vec![Element::new("A"),Element::new("B"),Element::new("C"),Element::new("D"),Element::new("E")];
+    let women = vec!["L","M","N","O","P"];
+    let mut a: Set<Element<&str>> = Set::new(men, )
+}
+
 fn main() {
     let (mut a, mut b) = generate_test_sets(3);
     a.stable_match_with(&mut b);
+
     println!("Men: {:?}\nWomen: {:?}", a, b);
 }
