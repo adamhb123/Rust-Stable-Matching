@@ -1,23 +1,26 @@
-use std::borrow::BorrowMut;
+use std::iter::zip;
 
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-#[derive(Clone)]
-struct Element<T> {
+struct Element<T: Clone> {
     index: usize,
     partner_index: usize,
     value: T,
     /// Preferences here is a Vec<usize> containing the indices of the preferences of the element, from most preferred to least preferreds
-    preferences: Vec<usize>,
+    preferences: Vec<usize>
 }
-impl<T: std::fmt::Debug> std::fmt::Debug for Element<T> {
+impl<T: Clone + std::fmt::Debug> std::fmt::Debug for Element<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:?}{:?}<->{:?}", self.index, self.preferences, self.partner_index )).unwrap();
+        f.write_fmt(format_args!(
+            "{:?}[{:?} {:?}]<->{:?}",
+            self.value, self.index, self.preferences, self.partner_index
+        ))
+        .unwrap();
         Ok(())
     }
 }
-impl<T: std::fmt::Debug> Element<T> {
+impl<T: Clone + std::fmt::Debug> Element<T> {
     fn new(value: T) -> Self {
         Element {
             index: usize::MAX,
@@ -45,6 +48,15 @@ impl<T: std::fmt::Debug> Element<T> {
         self.get_preference_value(e_index) < self.get_preference_value(self.partner_index)
     }
 }
+impl<T: Clone + std::fmt::Debug> Clone for Element<T> {
+    fn clone(&self) -> Self {
+        let mut e = Element::new(self.value.clone());
+        e.index = self.index.clone();
+        e.preferences = self.preferences.clone();
+        e.partner_index = self.partner_index.clone();
+        e
+    }
+}
 #[derive(Debug, Clone)]
 struct Set<T> {
     elements: Vec<T>,
@@ -60,7 +72,7 @@ impl<T> std::ops::IndexMut<usize> for Set<T> {
         &mut self.elements[i]
     }
 }
-impl<T: std::fmt::Debug> Set<Element<T>> {
+impl<T: Clone + std::fmt::Debug> Set<Element<T>> {
     fn new(elements: Vec<Element<T>>) -> Self {
         let mut this = Set { elements };
         // Initialize indices
@@ -69,22 +81,26 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
         }
         this
     }
-    fn any_unpaired(&mut self) -> usize {
-        for  e in &mut self.elements {
-            if !e.has_partner() {
+    fn get_first_unfulfilled(&mut self) -> usize {
+        for e in &mut self.elements {
+            if !e.has_partner() || // TODO: Need to create proposal structure to track proposals. If a man has not propossed to all women then he is unfulfilled {
                 return e.index;
             }
         }
         usize::MAX
     }
-    fn get_partner_of<'a>(&'a self, i: usize, other: &'a mut Set<Element<T>>) -> Option<&'a mut Element<T>>{
+    fn get_partner_of<'a>(
+        &'a self,
+        i: usize,
+        other: &'a mut Set<Element<T>>,
+    ) -> Option<&'a mut Element<T>> {
         let partner_index = self[i].partner_index;
         match partner_index < usize::MAX {
             true => Some(&mut other[partner_index]),
-            _ => None
+            _ => None,
         }
     }
-    fn set_preferences(&mut self, preferences: Vec<Vec<usize>>){
+    fn set_preferences(&mut self, preferences: Vec<Vec<usize>>) {
         for i in 0..self.elements.len() {
             self.elements[i].set_preferences(preferences[i].clone());
         }
@@ -106,41 +122,62 @@ impl<T: std::fmt::Debug> Set<Element<T>> {
             }
         }
     }
-    fn divorce(&mut self, i: usize, other_set: &mut Set<Element<T>>){
+    fn divorce(&mut self, i: usize, other_set: &mut Set<Element<T>>) {
         if i < usize::MAX && self.elements[i].has_partner() {
             let partner = self.get_partner_of(i, other_set);
             // Eternal sunshine for the spotless elements
-            partner.unwrap().partner_index = usize::MAX; 
-            self[i].partner_index = usize::MAX;
+            partner.unwrap().partner_index = usize::MAX; // Erase partner's partner pointer
+            self[i].partner_index = usize::MAX; // Erase self element's partner pointer
         }
     }
-    fn try_pair(&mut self, i: usize, j: usize, other_set: &mut Set<Element<T>>) -> bool {
-        self.divorce(i, other_set);
-        other_set.divorce(j, self);
-        (self.elements[i].partner_index, other_set.elements[j].partner_index) = (other_set.elements[j].index, self.elements[i].index);
-        return true;
+    /// Pair self.element\[i\] with other_set.element\[j\]
+    /// Where i and j are indices of their own sets respectively
+    /// i.e. i is the A element's index within self, j is the B element's index within other_set
+    fn pair(&mut self, i: usize, j: usize, other_set: &mut Set<Element<T>>) {
+        println!("Pairing {:?} and {:?}", self[i], other_set[j]);
+        self.divorce(i, other_set); // Divorce self element (i) from partner
+        other_set.divorce(j, self); // Divorce new partner from their partner
+                                    // First comes love, then comes:
+        (
+            self.elements[i].partner_index,
+            other_set.elements[j].partner_index,
+        ) = (other_set.elements[j].index, self.elements[i].index);
     }
-    
+
+    fn print_pairs(&self, other: &Set<Element<T>>) {
+        let size = self.elements.len();
+        let mut other_sorted = other.elements.clone();
+        other_sorted.sort_by(|a,b| a.partner_index.cmp(&b.partner_index));
+        let zipped: Vec<String> = zip(&self.elements, &other_sorted).map(|(a,b)| format!("({:?}, {:?})", a.value, b.value)).collect();
+        println!("{}", zipped.join(","));
+    }
+
     fn stable_match_with(&mut self, other: &mut Set<Element<T>>) {
         let size = self.elements.len();
         loop {
-            let i = self.any_unpaired();
-            if i == usize::MAX { // All paired
-                break
+            let i = self.get_first_unfulfilled();
+            if i == usize::MAX {
+                // All paired
+                break;
             }
-            for j in 0..size { // Iterate through unpaired's preferences, try and marry them from highest to lowest
+            for j in 0..size {
+                // Iterate through unpaired's preferences, try and marry them from highest to lowest
                 let pref_partner = &mut other[self[i].preferences[j]];
-                if !pref_partner.has_partner() { // preference has no partner? then pair
-                    self.try_pair(i, j, other);
+                if !pref_partner.has_partner() {
+                    println!("No partner!");
+                    // preference has no partner? then pair
+                    self.pair(i, pref_partner.index, other);
                     break;
-                }
-                else { // preference has partner
-                    if pref_partner.prefers(i) { // preference prefers self? then pair
-                        self.try_pair(i, j, other);
+                } else {
+                    // preference has partner
+                    if pref_partner.prefers(i) && self[i].prefers(pref_partner.index){ 
+                        println!("Preferred!");
+                        // preference prefers self? then pair
+                        self.pair(i, pref_partner.index, other);
                     }
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(4000));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 }
@@ -158,27 +195,43 @@ fn generate_test_sets(n: usize) -> (Set<Element<usize>>, Set<Element<usize>>) {
 }
 
 fn test() {
-    let men = vec![Element::new("A"),Element::new("B"),Element::new("C"),Element::new("D"),Element::new("E")];
-    let women = vec![Element::new("L"),Element::new("M"),Element::new("N"),Element::new("O"),Element::new("P")];
+    let men = vec![
+        Element::new("A"),
+        Element::new("B"),
+        Element::new("C"),
+        Element::new("D"),
+        Element::new("E"),
+    ];
+    let women = vec![
+        Element::new("L"),
+        Element::new("M"),
+        Element::new("N"),
+        Element::new("O"),
+        Element::new("P"),
+    ];
     let mut men_set: Set<Element<&str>> = Set::new(men);
     let mut women_set: Set<Element<&str>> = Set::new(women);
     men_set.set_preferences(vec![
-        vec![3,1,2,0,4],
-        vec![4,2,1,0,3],
-        vec![1,4,0,3,2],
-        vec![4,1,3,2,0],
-        vec![3,0,1,2,4]
+        vec![3, 1, 2, 0, 4],
+        vec![4, 2, 1, 0, 3],
+        vec![1, 4, 0, 3, 2],
+        vec![4, 1, 3, 2, 0],
+        vec![3, 0, 1, 2, 4],
     ]);
     women_set.set_preferences(vec![
-        vec![3,1,4,2,0],
-        vec![1,0,3,2,4],
-        vec![0,2,4,3,1],
-        vec![3,0,2,1,4],
-        vec![1,4,0,2,3],
+        vec![3, 1, 4, 2, 0],
+        vec![1, 0, 3, 2, 4],
+        vec![0, 2, 4, 3, 1],
+        vec![3, 0, 2, 1, 4],
+        vec![1, 4, 0, 2, 3],
     ]);
     men_set.stable_match_with(&mut women_set);
-    //men_set.try_pair(0, 0, &mut women_set);
-    println!("Partner: {:?}", men_set.get_partner_of(0, &mut women_set).unwrap());
+    men_set.print_pairs(&women_set);
+    //men_set.pair(0, 0, &mut women_set);
+    println!(
+        "Partner: {:?}",
+        men_set.get_partner_of(0, &mut women_set).unwrap()
+    );
     println!("Men: {:?}\nWomen: {:?}", men_set, women_set);
 }
 
