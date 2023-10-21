@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::iter::zip;
 
 use rand::rngs::ThreadRng;
@@ -7,8 +8,10 @@ struct Element<T: Clone> {
     index: usize,
     partner_index: usize,
     value: T,
-    /// Preferences here is a Vec<usize> containing the indices of the preferences of the element, from most preferred to least preferreds
-    preferences: Vec<usize>
+    /// Element.preferences is a Vec<usize> containing the indices of the preferences of the element, from most preferred to least preferred
+    preferences: Vec<usize>,
+    /// Element.proposals is a Vec<usize> containing the indices of the elements (in the opposing set) that this element has "proposed" to
+    proposals: Vec<usize>,
 }
 impl<T: Clone + std::fmt::Debug> std::fmt::Debug for Element<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -25,14 +28,14 @@ impl<T: Clone + std::fmt::Debug> Element<T> {
         Element {
             index: usize::MAX,
             partner_index: usize::MAX,
-            preferences: vec![],
             value,
+            preferences: vec![],
+            proposals: vec![],
         }
     }
     fn has_partner(&self) -> bool {
         self.partner_index != usize::MAX
     }
-
     fn set_preferences(&mut self, preferences: Vec<usize>) {
         self.preferences = preferences;
     }
@@ -58,23 +61,29 @@ impl<T: Clone + std::fmt::Debug> Clone for Element<T> {
     }
 }
 #[derive(Debug, Clone)]
-struct Set<T> {
+struct Set<'a,T> {
     elements: Vec<T>,
+    dominant: bool, // We only need to track proposals for dominant sets
+    proposal_map: HashMap<&'a T, &'a T>
 }
-impl<T> std::ops::Index<usize> for Set<T> {
+impl<T> std::ops::Index<usize> for Set<'_,T> {
     type Output = T;
     fn index<'a>(&'a self, i: usize) -> &'a T {
         &self.elements[i]
     }
 }
-impl<T> std::ops::IndexMut<usize> for Set<T> {
+impl<T> std::ops::IndexMut<usize> for Set<'_,T> {
     fn index_mut<'a>(&'a mut self, i: usize) -> &'a mut T {
         &mut self.elements[i]
     }
 }
-impl<T: Clone + std::fmt::Debug> Set<Element<T>> {
-    fn new(elements: Vec<Element<T>>) -> Self {
-        let mut this = Set { elements };
+impl<T: Clone + std::fmt::Debug> Set<'_,Element<T>> {
+    fn new(elements: Vec<Element<T>>, dominant: bool) -> Self {
+        let zipped  = zip((0..elements.len()).collect(), (0..elements.len()).collect());
+        let proposal_map: HashMap<usize, Vec<usize>> = HashMap::from(
+            zipped
+        );
+        let mut this = Set { elements, dominant, proposal_map: HashMap::new() };
         // Initialize indices
         for i in 0..this.elements.len() {
             this.elements[i].index = i;
@@ -82,8 +91,10 @@ impl<T: Clone + std::fmt::Debug> Set<Element<T>> {
         this
     }
     fn get_first_unfulfilled(&mut self) -> usize {
+        let size = self.elements.len();
         for e in &mut self.elements {
-            if !e.has_partner() || // TODO: Need to create proposal structure to track proposals. If a man has not propossed to all women then he is unfulfilled {
+            // If the element does not have a partner OR has not proposed to all potential partners, return his index
+            if !e.has_partner() || e.proposals.len() < size {
                 return e.index;
             }
         }
@@ -141,14 +152,16 @@ impl<T: Clone + std::fmt::Debug> Set<Element<T>> {
         (
             self.elements[i].partner_index,
             other_set.elements[j].partner_index,
-        ) = (other_set.elements[j].index, self.elements[i].index);
+        ) = (j, i);
+        self.elements[i].proposals.push(j);
     }
 
     fn print_pairs(&self, other: &Set<Element<T>>) {
-        let size = self.elements.len();
         let mut other_sorted = other.elements.clone();
-        other_sorted.sort_by(|a,b| a.partner_index.cmp(&b.partner_index));
-        let zipped: Vec<String> = zip(&self.elements, &other_sorted).map(|(a,b)| format!("({:?}, {:?})", a.value, b.value)).collect();
+        other_sorted.sort_by(|a, b| a.partner_index.cmp(&b.partner_index));
+        let zipped: Vec<String> = zip(&self.elements, &other_sorted)
+            .map(|(a, b)| format!("({:?}, {:?})", a.value, b.value))
+            .collect();
         println!("{}", zipped.join(","));
     }
 
@@ -170,7 +183,7 @@ impl<T: Clone + std::fmt::Debug> Set<Element<T>> {
                     break;
                 } else {
                     // preference has partner
-                    if pref_partner.prefers(i) && self[i].prefers(pref_partner.index){ 
+                    if pref_partner.prefers(i) && self[i].prefers(pref_partner.index) {
                         println!("Preferred!");
                         // preference prefers self? then pair
                         self.pair(i, pref_partner.index, other);
