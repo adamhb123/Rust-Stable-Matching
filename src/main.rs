@@ -1,19 +1,18 @@
-use std::collections::HashMap;
-use std::iter::zip;
-
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::iter::zip;
 struct Element<T: Clone> {
     index: usize,
     partner_index: usize,
     value: T,
     /// Element.preferences is a Vec<usize> containing the indices of the preferences of the element, from most preferred to least preferred
     preferences: Vec<usize>,
-    /// Element.proposals is a Vec<usize> containing the indices of the elements (in the opposing set) that this element has "proposed" to
-    proposals: Vec<usize>,
 }
-impl<T: Clone + std::fmt::Debug> std::fmt::Debug for Element<T> {
+
+impl<T: Clone + Debug> Debug for Element<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "{:?}[{:?} {:?}]<->{:?}",
@@ -23,14 +22,13 @@ impl<T: Clone + std::fmt::Debug> std::fmt::Debug for Element<T> {
         Ok(())
     }
 }
-impl<T: Clone + std::fmt::Debug> Element<T> {
+impl<T: Clone + Debug> Element<T> {
     fn new(value: T) -> Self {
         Element {
             index: usize::MAX,
             partner_index: usize::MAX,
             value,
             preferences: vec![],
-            proposals: vec![],
         }
     }
     fn has_partner(&self) -> bool {
@@ -39,19 +37,19 @@ impl<T: Clone + std::fmt::Debug> Element<T> {
     fn set_preferences(&mut self, preferences: Vec<usize>) {
         self.preferences = preferences;
     }
-    fn get_preference_value(&self, e_index: usize) -> Option<usize> {
+    fn get_preference_value(&self, e_index: usize) -> usize {
         for i in 0..self.preferences.len() {
             if self.preferences[i] == e_index {
-                return Some(i);
+                return i;
             }
         }
-        return None;
+        return usize::MAX;
     }
     fn prefers(&self, e_index: usize) -> bool {
         self.get_preference_value(e_index) < self.get_preference_value(self.partner_index)
     }
 }
-impl<T: Clone + std::fmt::Debug> Clone for Element<T> {
+impl<T: Clone + Debug> Clone for Element<T> {
     fn clone(&self) -> Self {
         let mut e = Element::new(self.value.clone());
         e.index = self.index.clone();
@@ -61,40 +59,47 @@ impl<T: Clone + std::fmt::Debug> Clone for Element<T> {
     }
 }
 #[derive(Debug, Clone)]
-struct Set<'a,T> {
+struct Set<T> {
     elements: Vec<T>,
-    dominant: bool, // We only need to track proposals for dominant sets
-    proposal_map: HashMap<&'a T, &'a T>
+    proposal_map: HashMap<usize, Vec<usize>>,
 }
-impl<T> std::ops::Index<usize> for Set<'_,T> {
+impl<T> std::ops::Index<usize> for Set<T> {
     type Output = T;
     fn index<'a>(&'a self, i: usize) -> &'a T {
         &self.elements[i]
     }
 }
-impl<T> std::ops::IndexMut<usize> for Set<'_,T> {
+impl<T> std::ops::IndexMut<usize> for Set<T> {
     fn index_mut<'a>(&'a mut self, i: usize) -> &'a mut T {
         &mut self.elements[i]
     }
 }
-impl<T: Clone + std::fmt::Debug> Set<'_,Element<T>> {
-    fn new(elements: Vec<Element<T>>, dominant: bool) -> Self {
-        let zipped  = zip((0..elements.len()).collect(), (0..elements.len()).collect());
-        let proposal_map: HashMap<usize, Vec<usize>> = HashMap::from(
-            zipped
-        );
-        let mut this = Set { elements, dominant, proposal_map: HashMap::new() };
+impl<T: Clone + Debug> Set<Element<T>> {
+    fn new(elements: Vec<Element<T>>) -> Self {
+        let mut this: Set<Element<T>> = Set {
+            elements,
+            proposal_map: HashMap::new(),
+        };
         // Initialize indices
         for i in 0..this.elements.len() {
             this.elements[i].index = i;
+            this.proposal_map.insert(i, vec![]);
         }
         this
     }
     fn get_first_unfulfilled(&mut self) -> usize {
         let size = self.elements.len();
+        // Check first for unpartnered elements:
         for e in &mut self.elements {
-            // If the element does not have a partner OR has not proposed to all potential partners, return his index
-            if !e.has_partner() || e.proposals.len() < size {
+            // If the element does not have a partner
+            if !e.has_partner() {
+                return e.index;
+            }
+        }
+        // Second for elements who have yet to ask all:
+        for e in &mut self.elements {
+            // If the element does not have a partner
+            if self.proposal_map[&e.index].len() < size {
                 return e.index;
             }
         }
@@ -153,7 +158,6 @@ impl<T: Clone + std::fmt::Debug> Set<'_,Element<T>> {
             self.elements[i].partner_index,
             other_set.elements[j].partner_index,
         ) = (j, i);
-        self.elements[i].proposals.push(j);
     }
 
     fn print_pairs(&self, other: &Set<Element<T>>) {
@@ -174,14 +178,28 @@ impl<T: Clone + std::fmt::Debug> Set<'_,Element<T>> {
                 break;
             }
             for j in 0..size {
-                // Iterate through unpaired's preferences, try and marry them from highest to lowest
-                let pref_partner = &mut other[self[i].preferences[j]];
-                if !pref_partner.has_partner() {
-                    println!("No partner!");
-                    // preference has no partner? then pair
+                let pref_partner = &other[self[i].preferences[j]];
+                println!("{:?} asks {:?}", self.elements[i].value, pref_partner.value);
+                if !(self[i].has_partner() || pref_partner.has_partner()) {
+                    // println!("No partners!");
                     self.pair(i, pref_partner.index, other);
                     break;
-                } else {
+                } else if !self.proposal_map[&i].contains(&pref_partner.index) {
+                    /* println!(
+                        "Adding {:?}.proposal_map <-- {:?} ",
+                        self[i].value, pref_partner.value
+                    );*/
+                    self.proposal_map
+                        .get_mut(&i)
+                        .unwrap()
+                        .push(pref_partner.index);
+                    /*println!("Man {:?} prefer? Woman {:?}", i, pref_partner.index);
+                    println!("Man partner current {:?}", self[i].partner_index);
+                    println!(
+                        "M pref W {:?} W pref M{:?}",
+                        self[i].prefers(pref_partner.index),
+                        pref_partner.prefers(i)
+                    );*/
                     // preference has partner
                     if pref_partner.prefers(i) && self[i].prefers(pref_partner.index) {
                         println!("Preferred!");
@@ -192,6 +210,7 @@ impl<T: Clone + std::fmt::Debug> Set<'_,Element<T>> {
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        // println!("{:?}", self.proposal_map);
     }
 }
 
@@ -241,16 +260,8 @@ fn test() {
     men_set.stable_match_with(&mut women_set);
     men_set.print_pairs(&women_set);
     //men_set.pair(0, 0, &mut women_set);
-    println!(
-        "Partner: {:?}",
-        men_set.get_partner_of(0, &mut women_set).unwrap()
-    );
-    println!("Men: {:?}\nWomen: {:?}", men_set, women_set);
 }
 
 fn main() {
-    let (mut a, mut b) = generate_test_sets(3);
-    //a.stable_match_with(&mut b);
     test();
-    // println!("Men: {:?}\nWomen: {:?}", a, b);
 }
